@@ -31,10 +31,13 @@ def parse(path):
     for m in ENTRY_RE.finditer(text):
         v = [float(m.group(i)) for i in range(1, 13)]
         name = m.group(13)
-        # columns of rotation matrix = part local axes in world space
-        xaxis = (v[3], v[4], v[5])
-        yaxis = (v[6], v[7], v[8])
-        zaxis = (v[9], v[10], v[11])
+        # Roblox CFrame.new(x,y,z, r00,r01,r02, r10,r11,r12, r20,r21,r22):
+        # world = M * local, so the COLUMNS of the matrix are the part's local
+        # axes expressed in world space (rows are not - using rows mirrors
+        # every wedge slope the wrong way).
+        xaxis = (v[3], v[6], v[9])
+        yaxis = (v[4], v[7], v[10])
+        zaxis = (v[5], v[8], v[11])
         parts.append({
             "pos": (v[0], v[1], v[2]),
             "x": xaxis, "y": yaxis, "z": zaxis,
@@ -74,8 +77,13 @@ def deltas(vals):
 
 
 # ------------------------------------------------------------------ geometry
-# footprint guess per part (sx, sy, sz) in the part's LOCAL frame, verified
-# against Lumber Tycoon 2 wiki + placement data: wall/pane long axis is local Z
+# footprint per part (sx, sy, sz) in the part's LOCAL frame.
+# Ground truth: the user's real in-game exports (Musseum v1.lua.txt) place
+# walls running along world X with rotation ID and along world Z with R90,
+# and in-game screenshots of R90-on-X walls show 1-stud-wide fins at 4-stud
+# spacing -> the wall's 4-stud length is along LOCAL X and its 1-stud
+# thickness along LOCAL Z.  (An earlier guess of long-axis-local-Z turned
+# every wall 90 degrees out of its line.)
 PART_SIZE = {
     "Floor2Large": (8, 0.2, 8),
     "Floor2Small": (2, 0.2, 2),
@@ -85,23 +93,23 @@ PART_SIZE = {
     "Floor1Small": (2, 1.0, 2),
     "Floor1Tiny": (1, 1.0, 1),
     "Floor1": (4, 1.0, 4),
-    "Wall2Tall": (1, 8, 4),
-    "Wall2TallThin": (1, 8, 2),
-    "Wall2Short": (1, 4, 4),
-    "Wall2ShortThin": (1, 4, 2),
-    "Wall2": (1, 2, 4),
-    "Wall2Thin": (1, 2, 2),
+    "Wall2Tall": (4, 8, 1),
+    "Wall2TallThin": (2, 8, 1),
+    "Wall2Short": (4, 4, 1),
+    "Wall2ShortThin": (2, 4, 1),
+    "Wall2": (4, 2, 1),
+    "Wall2Thin": (2, 2, 1),
     "Wall2TallCorner": (2, 8, 2),
     "Wall2Corner": (2, 2, 2),
     "Wall2ShortCorner": (2, 4, 2),
-    "Wall3TallThin": (1, 8, 2),
-    "GlassPane4": (1, 8, 4),
-    "GlassPane2": (1, 8, 2),
-    "GlassDoor1": (1, 8, 4),
-    "Door3": (1, 8, 6),
+    "Wall3TallThin": (2, 8, 1),
+    "GlassPane4": (4, 8, 1),
+    "GlassPane2": (2, 8, 1),
+    "GlassDoor1": (4, 8, 1),
+    "Door3": (6, 8, 1),
     "Post": (1, 4, 1),
     "Stair1": (4, 2, 4),
-    "Ladder1": (1, 4, 4),
+    "Ladder1": (4, 4, 1),
     "Chair1": (2, 5, 2),
     "Wedge1": (4, 1, 4), "Wedge2": (4, 2, 4), "Wedge3": (4, 3, 4),
     "Wedge4": (4, 4, 4), "Wedge5": (4, 5, 4), "Wedge6": (4, 6, 4),
