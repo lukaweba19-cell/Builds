@@ -8,6 +8,15 @@ the height, colour and material of the nearest existing tile.  Sub-stud
 slivers against walls may slide at most 0.75 studs under the wall so the floor
 meets the wall with no hairline.
 
+The output uses the only loader that verifiably works in game: the one
+from Musseum v1.lua.txt (saved byte-exact as tools/museum_loader.lua).
+Every fill is a wood floor tile, so every entry carries a TreeValue
+wood class - that is what tells the blueprint which wood to use when
+filling the build.  The old Hant.txt loader (workspace.Base /
+workspace.Structures) is NOT used: the blueprint system never scans
+those folders, so builds "wouldn't load" with it.  See
+OUTPUT_FORMAT.md.
+
 Usage: python3 tools/gen_missing.py [src] [out]
 Exit 0 on success (always writes the file; prints a report).
 """
@@ -399,7 +408,13 @@ def main():
     src = sys.argv[1] if len(sys.argv) > 1 else "Hant.txt"
     out = sys.argv[2] if len(sys.argv) > 2 else "missing.txt"
     parts = parse(src)
-    text = open(src, encoding="utf-8").read()
+
+    # exact colour -> TreeValue class (the partTable builds' colour
+    # system); tree_of maps palette RGB -> wood class
+    tree_of = {}
+    for _cls, _rgb in TREE_PALETTE.items():
+        tree_of.setdefault(_rgb, _cls)
+    palette = sorted(tree_of.items(), key=lambda kv: kv[0])
 
     all_placed = []
     report = []
@@ -416,6 +431,12 @@ def main():
         (x0, z0, nx, nz, covered, barrier, excluded, source,
          excl_parts, bar_parts) = rasterize(parts, ylev, members, ys)
         primary = Counter(p["name"] for p in members).most_common(1)[0][0]
+        # the level's dominant wood class: fills with no reachable source
+        # colour inherit it so every entry still carries a TreeValue
+        mcolors = Counter(tuple(round(c * 255) for c in p["color"])
+                          for p in members if p.get("color"))
+        level_cls = (tree_of.get(mcolors.most_common(1)[0][0])
+                     if mcolors else None)
         srcdesc = [None] * (nx * nz)
         member_desc = {}
         for pi, p in enumerate(members):
@@ -468,37 +489,46 @@ def main():
                          z0 + min(lj) * RES, z0 + (max(lj) + 1) * RES))
             for pl in placed:
                 pl["level"] = (min(ys), max(ys))
+                pl["cls"] = level_cls
             all_placed.extend(placed)
 
     # ---------------------------------------------------------------- emit
     n = len(all_placed)
-    head = text.split("\n", 1)[0] + "\n"          # "local partTable = {"
-    # partTable builds (the standard) are preferred; stolenBase is legacy
-    if "\nfor _, v in pairs(partTable)" in text:
-        foot_i = text.index("\nfor _, v in pairs(partTable)")
-    else:
-        foot_i = text.index("\nfor _, v in pairs(stolenBase)")
-    # exact colour -> TreeValue class (the partTable builds' colour system)
-    tree_of = {}
-    for _cls, _rgb in TREE_PALETTE.items():
-        tree_of.setdefault(_rgb, _cls)
+    # the working loader (Musseum v1, byte-exact) - NOT the source's own
+    # footer, which may be the broken workspace.Base/Structures one
+    with open(os.path.join(HERE, "museum_loader.lua"), encoding="utf-8") as fh:
+        footer = fh.read()
+    snapped = 0
+    inherited = 0
     lines = []
     for k, pl in enumerate(all_placed):
-        color = ""
+        # every fill is a wood floor tile and MUST carry a TreeValue -
+        # that is what tells the blueprint which wood to fill with.
+        # Priority: exact palette colour of the nearest source tile,
+        # then the level's dominant wood, then the nearest palette wood
+        # (counted and reported below).
+        cls = None
         if pl["color"] is not None:
             rgb = tuple(round(c * 255) for c in pl["color"])
-            if rgb in tree_of:
-                color = ", TreeValue = '%s'" % tree_of[rgb]
-            else:
-                color = ", Color = Color3.new(%.6f, %.6f, %.6f)" % pl["color"]
+            cls = tree_of.get(rgb)
+            if cls is None:
+                cls = min(palette, key=lambda kv: sum(
+                    (a - b) ** 2 for a, b in zip(kv[0], rgb)))[1]
+                snapped += 1
+        if cls is None:
+            cls = pl.get("cls") or "Generic"
+            inherited += 1
         comma = "," if k < n - 1 else ""
         lines.append(
-            '    {CFrame = CFrame.new(%.6f, %.6f, %.6f, %s), Name = \'%s\'%s}%s'
-            % (pl["x"], pl["y"], pl["z"], IDENTITY, pl["name"], color, comma))
+            "    {CFrame = CFrame.new(%.6f, %.6f, %.6f, %s), "
+            "Name = '%s', TreeValue = '%s'}%s"
+            % (pl["x"], pl["y"], pl["z"], IDENTITY, pl["name"], cls, comma))
     body = "\n".join(lines) + "\n" if lines else ""
-    footer = text[foot_i:]
     with open(out, "w", encoding="utf-8") as fh:
-        fh.write(head + body + footer)
+        fh.write("local partTable = {\n" + body + "}\n\n" + footer)
+    print("fills with no source colour (level wood used): %d" % inherited)
+    if snapped:
+        print("fills snapped to nearest wood class: %d" % snapped)
 
     total_left = sum(r[1] for r in report)
     print("levels with gaps: %d" % len({r[0] for r in report}))

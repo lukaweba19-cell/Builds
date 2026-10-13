@@ -2,7 +2,11 @@
 """Verify a gap-fill file against its source build.
 
 Checks:
-1. Format: same header/footer as the source, every line parses as a part.
+1. Format (OUTPUT_FORMAT.md - the working Musseum v1 blueprint format):
+   'local partTable = {' header, every entry {CFrame (12 numbers), Name,
+   TreeValue} with a wood class the loader's colour chain handles, and
+   the footer byte-exact from Musseum v1.lua.txt (tools/museum_loader.lua)
+   so the blueprint knows which wood to fill each part with.
 2. Hard overlaps: a fill may overlap existing floor tiles by design (the
    <=0.75-stud coplanar slide) and may tuck under a wall slide, but it must
    NEVER overlap another fill, nor any solid part (walls, wedges, furniture).
@@ -14,6 +18,7 @@ Usage: python3 tools/verify_missing.py [src] [fills]   (default Hant.txt missing
 Exit 1 on hard violations.
 """
 import os
+import re
 import sys
 from collections import Counter
 
@@ -44,18 +49,46 @@ def overlap(a, b):
     return ox * oy * oz, (ox, oy, oz)
 
 
-def check_format(src_text, fills_text, fills):
+ENTRY_RE = re.compile(
+    r"^    \{CFrame = CFrame\.new\((.*)\), Name = '([A-Za-z0-9_]+)', "
+    r"TreeValue = '([A-Za-z0-9_]+)'\}(,)?$")
+
+
+def check_format(fills_text, fills):
     problems = []
-    if fills_text.split("\n", 1)[0] != src_text.split("\n", 1)[0]:
-        problems.append("header differs from source")
-    sf = src_text.split("\nfor _, v in pairs(partTable)", 1)
-    ff = fills_text.split("\nfor _, v in pairs(partTable)", 1)
-    if len(sf) != 2 or len(ff) != 2 or sf[1] != ff[1]:
-        problems.append("footer differs from source")
-    lines = [l for l in ff[0].split("\n")[1:] if l.strip()]
-    if len(lines) != len(fills):
+    with open(os.path.join(HERE, "museum_loader.lua"), encoding="utf-8") as fh:
+        footer_ref = fh.read()
+    if not fills_text.startswith("local partTable = {\n"):
+        problems.append("header is not 'local partTable = {'")
+    sep = fills_text.find("\n}\n\n")
+    if sep == -1:
+        problems.append("'}' not followed by a blank line + loader footer")
+        return problems
+    if fills_text[sep + 4:] != footer_ref:
+        problems.append("loader footer differs from the Musseum v1 loader "
+                        "(tools/museum_loader.lua)")
+    body = fills_text[:sep].split("\n")[1:]
+    if len(body) != len(fills):
         problems.append("parse mismatch: %d parsed vs %d body lines"
-                        % (len(fills), len(lines)))
+                        % (len(fills), len(body)))
+    known = set(re.findall(r'v\.TreeValue == "(\w+)"', footer_ref))
+    classes = set()
+    for l in body:
+        m = ENTRY_RE.match(l)
+        if not m:
+            problems.append("entry does not match the {CFrame, Name, "
+                            "TreeValue} pattern: %s" % l[:90])
+            continue
+        nums = [s.strip() for s in m.group(1).split(",")]
+        if len(nums) != 12:
+            problems.append("CFrame.new has %d numbers (must be 12): %s"
+                            % (len(nums), l[:90]))
+            continue
+        classes.add(m.group(3))
+        if m.group(3) not in known:
+            problems.append("wood class %r not handled by the loader "
+                            "colour chain" % m.group(3))
+    print("fills wood classes: %s" % ", ".join(sorted(classes)))
     return problems
 
 
@@ -70,7 +103,7 @@ def main():
           % (os.path.basename(src), len(src_parts),
              os.path.basename(fills_path), len(fills)))
 
-    problems = check_format(src_text, fills_text, fills)
+    problems = check_format(fills_text, fills)
     for p in problems:
         print("  FORMAT  %s" % p)
 
