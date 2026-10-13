@@ -2,17 +2,20 @@
 """Verify dragon.txt against its sources.
 
 Checks:
-1. Format (OUTPUT_FORMAT.md):
+1. Format (OUTPUT_FORMAT.md - the working Musseum v1 blueprint format):
      local partTable = {
-         {CFrame = CFrame.new(x, y, z, r00..r22), Name = 'PartName'},
+         {CFrame = CFrame.new(x, y, z, r00..r22), Name = 'PartName',
+          TreeValue = 'WoodClass'},
      }
-   - every body line matches the {CFrame, Name} entry pattern exactly,
-     with 12 numbers in CFrame.new,
-   - NO TreeValue, NO colour, no stolenBase leftovers,
-   - the loader footer clones from ReplicatedStorage.ClientItemInfo into
-     workspace.BuildsStructures with SetPrimaryPartCFrame and a
-     PurchasedBoxItemName StringValue - byte-identical to the required
-     FOOTER,
+   - every body line matches the {CFrame, Name, TreeValue} entry pattern
+     exactly, with 12 numbers in CFrame.new,
+   - every entry carries a TreeValue wood class that the loader's colour
+     chain actually handles (this is what tells the blueprint which
+     wood to use when filling the build),
+   - the loader footer is byte-exact from Musseum v1.lua.txt (clones
+     into workspace.Builds with a TreeValue StringValue = wood class for
+     wood parts; bare entries go to BuildsStructures with
+     PurchasedBoxItemName) - cross-checked against the museum file,
    - the file on disk is byte-identical to what gen_dragon.py produces
      (no hand-edited drift).
 2. Part names: every Name used must appear in the real in-game export
@@ -46,7 +49,8 @@ MOUNT = (388.0, 405.0, 115.0, 170.0, -280.0, -220.0)     # dragon volume
 WATER_BOX = (386.0, 415.0, 33.0, 119.0, -285.0, -215.0)  # water corridor
 
 ENTRY_RE = re.compile(
-    r"^    \{CFrame = CFrame\.new\((.*)\), Name = '([A-Za-z0-9_]+)'\}(,)?$")
+    r"^    \{CFrame = CFrame\.new\((.*)\), Name = '([A-Za-z0-9_]+)', "
+    r"TreeValue = '([A-Za-z0-9_]+)'\}(,)?$")
 
 
 def aabb(p):
@@ -80,8 +84,9 @@ def main():
     # ------------------------------------------------------------ format
     if not text.startswith("local partTable = {\n"):
         problems.append("header is not 'local partTable = {'")
-    if "TreeValue" in text:
-        problems.append("TreeValue found in dragon.txt (format allows none)")
+    if 'PurchasedBoxItemName' in text.split("\n}\n\n")[0]:
+        problems.append("PurchasedBoxItemName inside partTable (wood parts "
+                        "must carry TreeValue instead)")
 
     lines = text.split("\n")
     try:
@@ -118,8 +123,33 @@ def main():
     if sep == -1:
         problems.append("'}' not followed by a blank line + loader footer")
     if footer != gen_dragon.FOOTER:
-        problems.append("loader footer differs from the required "
-                        "BuildsStructures / PurchasedBoxItemName footer")
+        problems.append("loader footer differs from the Musseum v1 loader")
+
+    # the shipped loader must stay byte-exact from the game's own export
+    mus_path = os.path.join(ROOT, "Musseum v1.lua.txt")
+    if os.path.exists(mus_path):
+        mus = open(mus_path, encoding="utf-8", errors="replace").read()
+        ref = mus[mus.index("local buildsFolder"):].replace("\r\n", "\n")
+        if ref.rstrip("\n") != gen_dragon.FOOTER.rstrip("\n"):
+            problems.append("tools/museum_loader.lua no longer matches the "
+                            "loader inside Musseum v1.lua.txt")
+    else:
+        problems.append("Musseum v1.lua.txt missing (loader cross-check source)")
+
+    # every entry must carry a wood class the loader can actually paint
+    missing_tv = [l for l in body if "TreeValue =" not in l]
+    if missing_tv:
+        problems.append("%d entries lack a TreeValue wood class (the "
+                        "blueprint needs the wood to fill with)"
+                        % len(missing_tv))
+    known = set(re.findall(r'v\.TreeValue == "(\w+)"', gen_dragon.FOOTER))
+    classes = set(re.findall(r"TreeValue = '([A-Za-z0-9_]+)'", text))
+    bogus_cls = sorted(c for c in classes if c not in known)
+    if bogus_cls:
+        problems.append("wood classes not handled by the loader colour "
+                        "chain: %s" % ", ".join(bogus_cls))
+    print("wood classes used: %s (all handled by the loader)"
+          % ", ".join(sorted(classes)))
 
     # part names must exist in ReplicatedStorage.ClientItemInfo; the real
     # in-game export files are the ground truth for what it contains.
@@ -130,7 +160,7 @@ def main():
         s = open(f, encoding="utf-8", errors="replace").read()
         valid |= set(re.findall(r"Name\s*=\s*'([^']+)'", s))
         valid |= set(re.findall(r"\[2\]\s*=\s*'([^']+)'", s))
-    names = set(re.findall(r"Name = '([A-Za-z0-9_]+)'", text))
+    names = set(re.findall(r"Name = '([A-Za-z0-9_]+)'", "\n".join(body)))
     bogus = sorted(n for n in names if n not in valid)
     if bogus:
         problems.append("part names not present in any in-game export "

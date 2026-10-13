@@ -31,19 +31,29 @@ Every added part is checked (tools/verify_dragon.py): zero overlap with
 all 20,685 castle parts, zero with the 255 dragon parts, and zero between
 water parts themselves (touching only).
 
-OUTPUT FORMAT (see OUTPUT_FORMAT.md - this is mandatory for every build
-file we produce):
+OUTPUT FORMAT (see OUTPUT_FORMAT.md - mandatory for every build file
+we produce): the EXACT working blueprint format from Musseum v1.lua.txt.
+Every part here is a wood part, so every entry carries its wood class:
 
     local partTable = {
-        {CFrame = CFrame.new(x, y, z, r00..r22), Name = 'PartName'},
+        {CFrame = CFrame.new(x, y, z, r00..r22), Name = 'PartName',
+         TreeValue = 'WoodClass'},
     }
 
-  * entries are {CFrame, Name} ONLY - no TreeValue, no color,
-  * 12 numbers per CFrame.new (position, then the 9 rotation values),
-  * part names must exist in ReplicatedStorage.ClientItemInfo,
-  * the loader footer clones the item model from ClientItemInfo, parents
-    it to workspace.BuildsStructures, sets its CFrame with
-    SetPrimaryPartCFrame and stamps a PurchasedBoxItemName StringValue.
+The loader (tools/museum_loader.lua, byte-exact from Musseum v1) is the
+one the game's blueprint system understands:
+
+  * an entry WITH TreeValue -> cloned into workspace.Builds with a
+    'TreeValue' StringValue whose VALUE is the wood class, and its
+    BuildDependentWood painted to that wood - this is what tells the
+    blueprint which wood to use when filling the build,
+  * an entry WITHOUT TreeValue (glass and other non-wood) -> cloned
+    into workspace.BuildsStructures with a 'PurchasedBoxItemName'
+    StringValue instead.
+
+An earlier variant of dragon.txt used the Hant.txt loader, which parents
+to workspace.Base / workspace.Structures - folders the blueprint system
+never scans, which is why it "wouldn't load".  Do not reintroduce it.
 
 Usage: python3 tools/gen_dragon.py
 """
@@ -56,8 +66,8 @@ from build3d import parse, part_box  # noqa: E402
 
 ROOT = os.path.dirname(HERE)
 
-# render-only wood classes (kept for tools/render_dragon.py previews; they
-# are NOT written into dragon.txt)
+# wood classes written into dragon.txt as TreeValue - this is what tells
+# the blueprint which wood to use when filling each part in game
 DRAGON_TREE = "Volcano"          # castle accent colour (banners, spire flag)
 WATER_TREE = "CaveCrawler"       # the waterfall's deep blue
 FOAM_TREE = "Frost"              # pale cyan foam
@@ -71,20 +81,11 @@ ID = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
 # same rotation the dragon relief gets: local x -> world +Z, local z -> world -X
 R90 = ((0, 0, 1), (0, 1, 0), (-1, 0, 0))
 
-# the mandatory loader footer (OUTPUT_FORMAT.md)
-FOOTER = """local previewFolder = workspace:FindFirstChild("BuildsStructures") or Instance.new("Folder", workspace)
-previewFolder.Name = "BuildsStructures"
-
-for _, v in pairs(partTable) do
-    local part = game.ReplicatedStorage.ClientItemInfo:FindFirstChild(v.Name):FindFirstChildOfClass('Model'):Clone()
-    part.Parent = previewFolder
-    part:SetPrimaryPartCFrame(v.CFrame)
-    part.Name = v.Name
-    local treeValue = Instance.new("StringValue", part)
-    treeValue.Name = "PurchasedBoxItemName"
-    treeValue.Value = v.Name
-end
-"""
+# the mandatory loader footer: byte-exact from Musseum v1.lua.txt (the
+# export that verifiably works in game), kept in tools/museum_loader.lua
+# and cross-checked against the museum file by tools/verify_dragon.py
+with open(os.path.join(HERE, "museum_loader.lua"), encoding="utf-8") as _fh:
+    FOOTER = _fh.read()
 
 
 def rotate90_y(pos, axes):
@@ -265,9 +266,10 @@ def render_file(dragon, water):
              m[0][2], m[1][2], m[2][2])
         comma = "," if k < n - 1 else ""
         lines.append(
-            "    {CFrame = CFrame.new(%s, %s, %s, %s), Name = '%s'}%s"
+            "    {CFrame = CFrame.new(%s, %s, %s, %s), Name = '%s', "
+            "TreeValue = '%s'}%s"
             % (fmt(p["pos"][0]), fmt(p["pos"][1]), fmt(p["pos"][2]),
-               ", ".join(fmt(v) for v in r), p["name"], comma))
+               ", ".join(fmt(v) for v in r), p["name"], p["tree"], comma))
     return "\n".join(lines) + "\n}\n\n" + FOOTER
 
 
@@ -293,8 +295,8 @@ def main():
           % (min(b[0] for b in nboxes), max(b[1] for b in nboxes),
              min(b[2] for b in nboxes), max(b[3] for b in nboxes),
              min(b[4] for b in nboxes), max(b[5] for b in nboxes)))
-    print("wrote dragon.txt (%d entries, no TreeValue, BuildsStructures loader)"
-          % (len(dragon) + len(water)))
+    print("wrote dragon.txt (%d entries, every part with its TreeValue wood "
+          "class, Musseum v1 loader)" % (len(dragon) + len(water)))
 
 
 if __name__ == "__main__":
