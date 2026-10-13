@@ -20,8 +20,21 @@ ENTRY_RE = re.compile(
     r"\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,"
     r"\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*\)\s*,"
     r"\s*Name\s*=\s*[\"']([^\"']+)[\"']"
+    r"(?:\s*,\s*TreeValue\s*=\s*[\"']([^\"']*)[\"'])?"
     r"(?:\s*,\s*Color\s*=\s*Color3\.new\(\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*\))?"
 )
+
+# TreeValue class colours, from the partTable builds' own loaders (message.txt
+# and the Castle treeclass palette).
+TREE_PALETTE = {
+    "Generic": (204, 142, 105), "Oak": (234, 184, 146), "Cherry": (163, 75, 75),
+    "Fir": (215, 197, 154), "Pine": (215, 197, 154), "Birch": (205, 205, 205),
+    "Walnut": (105, 64, 40), "Koa": (143, 76, 42), "Volcano": (255, 0, 0),
+    "GreenSwampy": (52, 142, 64), "GoldSwampy": (226, 155, 64),
+    "Palm": (226, 220, 188), "SnowGlow": (255, 255, 0), "Frost": (159, 243, 233),
+    "CaveCrawler": (16, 42, 220), "BlueSpruce": (159, 173, 192),
+    "LoneCave": (248, 248, 248), "Spooky": (170, 85, 0), "SpookyNeon": (170, 85, 0),
+}
 
 
 def parse(path):
@@ -32,9 +45,12 @@ def parse(path):
     for m in ENTRY_RE.finditer(text):
         v = [float(m.group(i)) for i in range(1, 13)]
         name = m.group(13)
+        tree = m.group(14)
         color = None
-        if m.group(14) is not None:
-            color = tuple(float(m.group(i)) for i in (14, 15, 16))
+        if m.group(15) is not None:
+            color = tuple(float(m.group(i)) for i in (15, 16, 17))
+        elif tree in TREE_PALETTE:
+            color = tuple(c / 255.0 for c in TREE_PALETTE[tree])
         # Roblox CFrame.new(x,y,z, r00,r01,r02, r10,r11,r12, r20,r21,r22):
         # world = M * local, so the COLUMNS of the matrix are the part's local
         # axes expressed in world space (rows are not - using rows mirrors
@@ -47,6 +63,7 @@ def parse(path):
             "x": xaxis, "y": yaxis, "z": zaxis,
             "name": name,
             "color": color,
+            "tree": tree,
         })
     return parts
 

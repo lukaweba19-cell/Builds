@@ -48,8 +48,8 @@ def check_format(src_text, fills_text, fills):
     problems = []
     if fills_text.split("\n", 1)[0] != src_text.split("\n", 1)[0]:
         problems.append("header differs from source")
-    sf = src_text.split("\nfor _, v in pairs(stolenBase)", 1)
-    ff = fills_text.split("\nfor _, v in pairs(stolenBase)", 1)
+    sf = src_text.split("\nfor _, v in pairs(partTable)", 1)
+    ff = fills_text.split("\nfor _, v in pairs(partTable)", 1)
     if len(sf) != 2 or len(ff) != 2 or sf[1] != ff[1]:
         problems.append("footer differs from source")
     lines = [l for l in ff[0].split("\n")[1:] if l.strip()]

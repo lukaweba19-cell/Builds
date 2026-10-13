@@ -17,7 +17,7 @@ from collections import Counter, deque
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from build3d import parse, part_box, PART_SIZE  # noqa: E402
+from build3d import parse, part_box, PART_SIZE, TREE_PALETTE  # noqa: E402
 import hant_scan as hs  # noqa: E402
 
 RES = hs.RES
@@ -472,15 +472,28 @@ def main():
 
     # ---------------------------------------------------------------- emit
     n = len(all_placed)
-    head = text.split("\n", 1)[0] + "\n"          # "local stolenBase = {"
-    foot_i = text.index("\nfor _, v in pairs(stolenBase)")
+    head = text.split("\n", 1)[0] + "\n"          # "local partTable = {"
+    # partTable builds (the standard) are preferred; stolenBase is legacy
+    if "\nfor _, v in pairs(partTable)" in text:
+        foot_i = text.index("\nfor _, v in pairs(partTable)")
+    else:
+        foot_i = text.index("\nfor _, v in pairs(stolenBase)")
+    # exact colour -> TreeValue class (the partTable builds' colour system)
+    tree_of = {}
+    for _cls, _rgb in TREE_PALETTE.items():
+        tree_of.setdefault(_rgb, _cls)
     lines = []
     for k, pl in enumerate(all_placed):
-        color = ("" if pl["color"] is None else
-                 ", Color = Color3.new(%.6f, %.6f, %.6f)" % pl["color"])
+        color = ""
+        if pl["color"] is not None:
+            rgb = tuple(round(c * 255) for c in pl["color"])
+            if rgb in tree_of:
+                color = ", TreeValue = '%s'" % tree_of[rgb]
+            else:
+                color = ", Color = Color3.new(%.6f, %.6f, %.6f)" % pl["color"]
         comma = "," if k < n - 1 else ""
         lines.append(
-            '    {CFrame = CFrame.new(%.6f, %.6f, %.6f, %s), Name = "%s"%s}%s'
+            '    {CFrame = CFrame.new(%.6f, %.6f, %.6f, %s), Name = \'%s\'%s}%s'
             % (pl["x"], pl["y"], pl["z"], IDENTITY, pl["name"], color, comma))
     body = "\n".join(lines) + "\n" if lines else ""
     footer = text[foot_i:]
