@@ -9,34 +9,41 @@ waterfall stays in the treehouse), and:
 
   * rotates the relief +90 degrees about Y so it faces outward (+X) from
     the castle keep's tall east wall (the flat face at x=390),
-  * lifts it so it stands just above the battlements, y[117.2..170.2],
+  * lifts it so it stands just above the battlements, y[117.2..165.6],
     rising alongside the central tower - verified zero overlap with all
-    20,081 castle parts,
-  * recolours every part to the castle's accent colour (TreeValue
-    'Volcano', the red of its banners and spire flag).
+    20,685 castle parts.
 
-It then adds the WATER the dragon is bursting out of, in the waterfall's
-own CaveCrawler blue with Frost foam and LoneCave spray (all verified
-palette classes):
+It then adds the WATER the dragon is bursting out of:
 
   1. burst pool  - terraced water disc clinging to the wall at the
-     dragon's feet, y[114.0..116.6], with a Frost foam ring and LoneCave
-     spray posts shooting up around the rim,
+     dragon's feet, y[114.0..116.6], with a foam ring and spray posts
+     shooting up around the rim,
   2. cascade     - four vertical water sheets hugging the wall face
      (x[391.1..392.1]) from the pool down to the battlement walkway,
   3. ribbon      - a shallow channel pooling on the walkway between the
-     crest wedges and the parapet (x[391..393], y[63.6..63.8),
+     crest wedges and the parapet (x[391..393], y63.6..63.8),
   4. pours       - five columns spouting through the crenel gaps from
      above the merlons down the outer face to the terrace below,
   5. terrace pool - a wide sheet spreading on the terrace top (y34.6)
-     with a Frost foam rim, catching every pour.
+     with a foam rim, catching every pour.
 
-Every added part is checked: zero overlap with all 20,081 castle parts,
-zero with the 255 dragon parts, and zero between water parts themselves
-(touching only).
+Every added part is checked (tools/verify_dragon.py): zero overlap with
+all 20,685 castle parts, zero with the 255 dragon parts, and zero between
+water parts themselves (touching only).
 
-Output is a standalone partTable file: the same structure and loader
-footer as every other build, containing dragon + water - no castle code.
+OUTPUT FORMAT (see OUTPUT_FORMAT.md - this is mandatory for every build
+file we produce):
+
+    local partTable = {
+        {CFrame = CFrame.new(x, y, z, r00..r22), Name = 'PartName'},
+    }
+
+  * entries are {CFrame, Name} ONLY - no TreeValue, no color,
+  * 12 numbers per CFrame.new (position, then the 9 rotation values),
+  * part names must exist in ReplicatedStorage.ClientItemInfo,
+  * the loader footer clones the item model from ClientItemInfo, parents
+    it to workspace.BuildsStructures, sets its CFrame with
+    SetPrimaryPartCFrame and stamps a PurchasedBoxItemName StringValue.
 
 Usage: python3 tools/gen_dragon.py
 """
@@ -48,10 +55,14 @@ sys.path.insert(0, HERE)
 from build3d import parse, part_box  # noqa: E402
 
 ROOT = os.path.dirname(HERE)
+
+# render-only wood classes (kept for tools/render_dragon.py previews; they
+# are NOT written into dragon.txt)
 DRAGON_TREE = "Volcano"          # castle accent colour (banners, spire flag)
 WATER_TREE = "CaveCrawler"       # the waterfall's deep blue
 FOAM_TREE = "Frost"              # pale cyan foam
 SPRAY_TREE = "LoneCave"          # white spray
+
 TARGET_X0 = 390.6                # just clear of the wall face at x=390.5
 TARGET_Y0 = 117.2                # above the battlement ledge (tops at 67.1)
 TARGET_ZC = -250.0               # centre of the keep's east wall (z -302..-198)
@@ -59,6 +70,21 @@ TARGET_ZC = -250.0               # centre of the keep's east wall (z -302..-198)
 ID = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
 # same rotation the dragon relief gets: local x -> world +Z, local z -> world -X
 R90 = ((0, 0, 1), (0, 1, 0), (-1, 0, 0))
+
+# the mandatory loader footer (OUTPUT_FORMAT.md)
+FOOTER = """local previewFolder = workspace:FindFirstChild("BuildsStructures") or Instance.new("Folder", workspace)
+previewFolder.Name = "BuildsStructures"
+
+for _, v in pairs(partTable) do
+    local part = game.ReplicatedStorage.ClientItemInfo:FindFirstChild(v.Name):FindFirstChildOfClass('Model'):Clone()
+    part.Parent = previewFolder
+    part:SetPrimaryPartCFrame(v.CFrame)
+    part.Name = v.Name
+    local treeValue = Instance.new("StringValue", part)
+    treeValue.Name = "PurchasedBoxItemName"
+    treeValue.Value = v.Name
+end
+"""
 
 
 def rotate90_y(pos, axes):
@@ -69,7 +95,10 @@ def rotate90_y(pos, axes):
 
 
 def water_parts():
-    """All water parts as build3d-style dicts (pos/x/y/z/name/tree)."""
+    """All water parts as build3d-style dicts (pos/x/y/z/name/tree).
+
+    'tree' is render-only; it never reaches the output file.
+    """
     parts = []
 
     def add(name, x, y, z, tree, axes=ID):
@@ -171,57 +200,64 @@ def water_parts():
     return parts
 
 
-def main():
+def build():
+    """Return (dragon, water): two lists of build3d-style part dicts.
+
+    Each dict has pos/x/y/z/name plus a render-only 'tree'.  The file
+    output carries only CFrame + Name.
+    """
     th = parse(os.path.join(ROOT, "treehouse.txt"))
 
     def rgb(p):
         c = p.get("color")
         return tuple(round(v * 255) for v in c) if c else None
 
-    dragon = [p for p in th
-              if rgb(p) == (16, 42, 220)
-              and 250 <= p["pos"][0] <= 298
-              and -613 <= p["pos"][2] <= -604
-              and 2 <= p["pos"][1] <= 60]
-    if not dragon:
+    dragon_src = [p for p in th
+                  if rgb(p) == (16, 42, 220)
+                  and 250 <= p["pos"][0] <= 298
+                  and -613 <= p["pos"][2] <= -604
+                  and 2 <= p["pos"][1] <= 60]
+    if not dragon_src:
         raise SystemExit("dragon parts not found in treehouse waterfall")
 
-    # exact source bounding box
     def box(p):
         cs = part_box(p)
-        xs = [c[0] for c in cs]; ys = [c[1] for c in cs]; zs = [c[2] for c in cs]
+        xs = [c[0] for c in cs]
+        ys = [c[1] for c in cs]
+        zs = [c[2] for c in cs]
         return min(xs), max(xs), min(ys), max(ys), min(zs), max(zs)
 
-    boxes = [box(p) for p in dragon]
-    sx0 = min(b[0] for b in boxes); sx1 = max(b[1] for b in boxes)
+    boxes = [box(p) for p in dragon_src]
+    sx0 = min(b[0] for b in boxes)
+    sx1 = max(b[1] for b in boxes)
     sy0 = min(b[2] for b in boxes)
-    sz0 = min(b[4] for b in boxes); sz1 = max(b[5] for b in boxes)
+    sz0 = min(b[4] for b in boxes)
+    sz1 = max(b[5] for b in boxes)
 
     # after rotate90_y: x'=z, z'=-x.  Choose translation for exact placement.
     tz = TARGET_ZC - (-(sx0 + sx1) / 2.0)          # centre width on the wall
     tx = TARGET_X0 - sz0                            # back just off the face
     ty = TARGET_Y0 - sy0
 
-    out_parts = []
-    for p in dragon:
+    dragon = []
+    for p in dragon_src:
         npos, naxes = rotate90_y(p["pos"], (p["x"], p["y"], p["z"]))
         npos = (npos[0] + tx, npos[1] + ty, npos[2] + tz)
-        out_parts.append({"pos": npos, "x": naxes[0], "y": naxes[1],
-                          "z": naxes[2], "name": p["name"], "tree": DRAGON_TREE})
-    water = water_parts()
-    out_parts.extend(water)
+        dragon.append({"pos": npos, "x": naxes[0], "y": naxes[1],
+                       "z": naxes[2], "name": p["name"], "tree": DRAGON_TREE})
+    return dragon, water_parts()
 
-    # loader footer: identical to the other partTable builds (Hant.txt)
-    hant = open(os.path.join(ROOT, "Hant.txt"), encoding="utf-8").read()
-    footer = hant[hant.index("\nfor _, v in pairs(partTable)"):]
+
+def render_file(dragon, water):
+    """The exact dragon.txt content for the given parts (OUT FORMAT spec)."""
 
     def fmt(v):
-        s = "%.6f" % v
-        return s
+        return "%.6f" % v
 
     lines = ["local partTable = {"]
-    n = len(out_parts)
-    for k, p in enumerate(out_parts):
+    parts = dragon + water
+    n = len(parts)
+    for k, p in enumerate(parts):
         m = (p["x"], p["y"], p["z"])           # columns = local axes
         # CFrame.new(x,y,z, r00,r01,r02, r10,r11,r12, r20,r21,r22)
         r = (m[0][0], m[1][0], m[2][0],
@@ -229,26 +265,36 @@ def main():
              m[0][2], m[1][2], m[2][2])
         comma = "," if k < n - 1 else ""
         lines.append(
-            "    {CFrame = CFrame.new(%s, %s, %s, %s), Name = '%s', TreeValue = '%s'}%s"
+            "    {CFrame = CFrame.new(%s, %s, %s, %s), Name = '%s'}%s"
             % (fmt(p["pos"][0]), fmt(p["pos"][1]), fmt(p["pos"][2]),
-               ", ".join(fmt(v) for v in r), p["name"], p["tree"], comma))
-    body = "\n".join(lines) + "\n"
-    with open(os.path.join(ROOT, "dragon.txt"), "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(body + footer)
+               ", ".join(fmt(v) for v in r), p["name"], comma))
+    return "\n".join(lines) + "\n}\n\n" + FOOTER
 
-    # report placement
-    nboxes = [box({"pos": p["pos"], "x": p["x"], "y": p["y"], "z": p["z"],
-                   "name": p["name"]}) for p in out_parts]
-    print("dragon parts: %d (all TreeValue '%s')" % (len(dragon), DRAGON_TREE))
-    print("water parts: %d (TreeValue '%s'/'%s'/'%s')"
+
+def main():
+    dragon, water = build()
+
+    with open(os.path.join(ROOT, "dragon.txt"), "w",
+              encoding="utf-8", newline="\n") as fh:
+        fh.write(render_file(dragon, water))
+
+    def box(p):
+        cs = part_box(p)
+        xs = [c[0] for c in cs]
+        ys = [c[1] for c in cs]
+        zs = [c[2] for c in cs]
+        return min(xs), max(xs), min(ys), max(ys), min(zs), max(zs)
+
+    nboxes = [box(p) for p in dragon + water]
+    print("dragon parts: %d (render colour '%s')" % (len(dragon), DRAGON_TREE))
+    print("water parts: %d (render colours '%s'/'%s'/'%s')"
           % (len(water), WATER_TREE, FOAM_TREE, SPRAY_TREE))
-    print("source: x[%.2f..%.2f] y[%.2f..%.2f] z[%.2f..%.2f]"
-          % (sx0, sx1, sy0, max(b[3] for b in boxes), sz0, sz1))
     print("placed: x[%.2f..%.2f] y[%.2f..%.2f] z[%.2f..%.2f]"
           % (min(b[0] for b in nboxes), max(b[1] for b in nboxes),
              min(b[2] for b in nboxes), max(b[3] for b in nboxes),
              min(b[4] for b in nboxes), max(b[5] for b in nboxes)))
-    print("wrote dragon.txt")
+    print("wrote dragon.txt (%d entries, no TreeValue, BuildsStructures loader)"
+          % (len(dragon) + len(water)))
 
 
 if __name__ == "__main__":
