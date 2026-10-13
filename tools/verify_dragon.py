@@ -5,12 +5,15 @@ Checks:
 1. Format: partTable structure (header, single-quoted names, TreeValue
    classes), loader footer identical to the other partTable builds, every
    body line parses, no Colour/Color3 leftovers, no castle code.
-2. Identity: same part names/multiset as the treehouse waterfall's blue
-   dragon parts (only pose and colour changed).
+2. Identity: the Volcano parts are exactly the treehouse waterfall's blue
+   dragon parts (only pose and colour changed); the rest are the water
+   system (TreeValue CaveCrawler/Frost/LoneCave).
 3. Rotations: every CFrame rotation stays orthonormal.
-4. Placement: zero AABB overlap (volume > 1e-4) against all Castle.txt
-   parts, and the dragon lies inside the intended mounting volume on the
-   keep's east face.
+4. Placement: zero AABB overlap (volume > 1e-4) for every pair of
+   dragon~castle, water~castle, water~dragon and water~water (water parts
+   may touch but not interpenetrate).  The dragon must lie inside the
+   intended mounting volume on the keep's east face; the water must stay
+   inside its own corridor volume between the wall and the terrace.
 
 Usage: python3 tools/verify_dragon.py   Exit 1 on any violation.
 """
@@ -24,7 +27,10 @@ from build3d import parse, part_box  # noqa: E402
 import castle  # noqa: E402
 
 ROOT = os.path.dirname(HERE)
-MOUNT = (388.0, 405.0, 115.0, 170.0, -280.0, -220.0)   # allowed volume
+MOUNT = (388.0, 405.0, 115.0, 170.0, -280.0, -220.0)   # dragon volume
+WATER_BOX = (386.0, 415.0, 33.0, 119.0, -285.0, -215.0)  # water corridor
+DRAGON_TREES = ("Volcano",)
+WATER_TREES = ("CaveCrawler", "Frost", "LoneCave")
 
 
 def aabb(p):
@@ -41,6 +47,12 @@ def aabb(p):
         cs = part_box(p)
     xs = [c[0] for c in cs]; ys = [c[1] for c in cs]; zs = [c[2] for c in cs]
     return min(xs), max(xs), min(ys), max(ys), min(zs), max(zs)
+
+
+def overlap(b, c, eps=1e-4):
+    return (min(b[1], c[1]) - max(b[0], c[0]) > eps
+            and min(b[3], c[3]) - max(b[2], c[2]) > eps
+            and min(b[5], c[5]) - max(b[4], c[4]) > eps)
 
 
 def main():
@@ -69,10 +81,12 @@ def main():
     if len(dg) != len(entries):
         problems.append("parse mismatch: %d parsed vs %d entry lines"
                         % (len(dg), len(entries)))
-    bad_tree = [p for p in dg if p.get("tree") != "Volcano"]
-    if bad_tree:
-        problems.append("%d parts are not TreeValue Volcano (e.g. %s tree=%r)"
-                        % (len(bad_tree), bad_tree[0]["name"], bad_tree[0].get("tree")))
+    dragon = [p for p in dg if p.get("tree") in DRAGON_TREES]
+    water = [p for p in dg if p.get("tree") in WATER_TREES]
+    unknown = [p for p in dg if p.get("tree") not in DRAGON_TREES + WATER_TREES]
+    if unknown:
+        problems.append("%d parts have unexpected TreeValue (e.g. %s tree=%r)"
+                        % (len(unknown), unknown[0]["name"], unknown[0].get("tree")))
     for p in dg:
         ok = True
         for a in (p["x"], p["y"], p["z"]):
@@ -81,6 +95,10 @@ def main():
         if not ok:
             problems.append("non-orthonormal rotation on %s" % p["name"])
             break
+    print("parts: %d total = %d dragon + %d water"
+          % (len(dg), len(dragon), len(water)))
+    wcount = Counter(p.get("tree") for p in water)
+    print("water by class: %s" % dict(wcount))
 
     # ------------------------------------------------ identity (names)
     th = parse(os.path.join(ROOT, "treehouse.txt"))
@@ -91,37 +109,61 @@ def main():
            if rgb(p) == (16, 42, 220)
            and 250 <= p["pos"][0] <= 298 and -613 <= p["pos"][2] <= -604
            and 2 <= p["pos"][1] <= 60]
-    if Counter(p["name"] for p in src) != Counter(p["name"] for p in dg):
+    if Counter(p["name"] for p in src) != Counter(p["name"] for p in dragon):
         problems.append("dragon part multiset differs from the treehouse source")
-    print("source dragon parts: %d   dragon.txt parts: %d" % (len(src), len(dg)))
+    print("source dragon parts: %d   dragon.txt dragon parts: %d"
+          % (len(src), len(dragon)))
+
+    # -------------------------------------------------- volumes
+    db = [aabb(p) for p in dragon]
+    wb = [aabb(p) for p in water]
+    for p, b in zip(dragon, db):
+        if not (MOUNT[0] <= b[0] and b[1] <= MOUNT[1]
+                and MOUNT[2] <= b[2] and b[3] <= MOUNT[3]
+                and MOUNT[4] <= b[4] and b[5] <= MOUNT[5]):
+            problems.append("dragon part %s outside the mounting volume" % p["name"])
+            break
+    for p, b in zip(water, wb):
+        if not (WATER_BOX[0] <= b[0] and b[1] <= WATER_BOX[1]
+                and WATER_BOX[2] <= b[2] and b[3] <= WATER_BOX[3]
+                and WATER_BOX[4] <= b[4] and b[5] <= WATER_BOX[5]):
+            problems.append("water part %s (%r) outside the water corridor"
+                            % (p["name"], p.get("tree")))
+            break
+    if db:
+        print("dragon volume: x[%.2f..%.2f] y[%.2f..%.2f] z[%.2f..%.2f]"
+              % (min(b[0] for b in db), max(b[1] for b in db),
+                 min(b[2] for b in db), max(b[3] for b in db),
+                 min(b[4] for b in db), max(b[5] for b in db)))
+    if wb:
+        print("water volume:  x[%.2f..%.2f] y[%.2f..%.2f] z[%.2f..%.2f]"
+              % (min(b[0] for b in wb), max(b[1] for b in wb),
+                 min(b[2] for b in wb), max(b[3] for b in wb),
+                 min(b[4] for b in wb), max(b[5] for b in wb)))
 
     # -------------------------------------------------- vs the castle
     cp = castle.parse(os.path.join(ROOT, "Castle.txt"))
     cb = [aabb(p) for p in cp]
+
+    def count_hits(boxes, others, label, same=False):
+        hits = 0
+        for i, b in enumerate(boxes):
+            for j, c in enumerate(others):
+                if same and j <= i:          # distinct pairs only
+                    continue
+                if overlap(b, c):
+                    hits += 1
+                    if hits <= 3:
+                        print("  HARD %s x[%.1f..%.1f] y[%.1f..%.1f] z[%.1f..%.1f]"
+                              % (label, c[0], c[1], c[2], c[3], c[4], c[5]))
+        print("hard overlaps %s: %d" % (label, hits))
+        return hits
+
     hard = 0
-    db = []
-    for p in dg:
-        b = aabb(p)
-        db.append(b)
-        if not (MOUNT[0] <= b[0] and b[1] <= MOUNT[1]
-                and MOUNT[2] <= b[2] and b[3] <= MOUNT[3]
-                and MOUNT[4] <= b[4] and b[5] <= MOUNT[5]):
-            problems.append("part %s outside the intended mounting volume" % p["name"])
-            break
-    for b in db:
-        for c in cb:
-            if (min(b[1], c[1]) - max(b[0], c[0]) > 1e-4
-                    and min(b[3], c[3]) - max(b[2], c[2]) > 1e-4
-                    and min(b[5], c[5]) - max(b[4], c[4]) > 1e-4):
-                hard += 1
-                if hard <= 5:
-                    print("  HARD dragon~castle x[%.1f..%.1f] y[%.1f..%.1f] z[%.1f..%.1f]"
-                          % (c[0], c[1], c[2], c[3], c[4], c[5]))
-    print("hard overlaps dragon~castle: %d" % hard)
-    print("dragon volume: x[%.2f..%.2f] y[%.2f..%.2f] z[%.2f..%.2f]"
-          % (min(b[0] for b in db), max(b[1] for b in db),
-             min(b[2] for b in db), max(b[3] for b in db),
-             min(b[4] for b in db), max(b[5] for b in db)))
+    hard += count_hits(db, cb, "dragon~castle")
+    hard += count_hits(wb, cb, "water~castle")
+    hard += count_hits(wb, db, "water~dragon")
+    hard += count_hits(wb, wb, "water~water", same=True)
 
     for pr in problems:
         print("  PROBLEM  %s" % pr)
