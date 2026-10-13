@@ -19,7 +19,8 @@ ENTRY_RE = re.compile(
     r"\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,"
     r"\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,"
     r"\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*\)\s*,"
-    r"\s*Name\s*=\s*'([^']+)'"
+    r"\s*Name\s*=\s*[\"']([^\"']+)[\"']"
+    r"(?:\s*,\s*Color\s*=\s*Color3\.new\(\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*\))?"
 )
 
 
@@ -31,6 +32,9 @@ def parse(path):
     for m in ENTRY_RE.finditer(text):
         v = [float(m.group(i)) for i in range(1, 13)]
         name = m.group(13)
+        color = None
+        if m.group(14) is not None:
+            color = tuple(float(m.group(i)) for i in (14, 15, 16))
         # Roblox CFrame.new(x,y,z, r00,r01,r02, r10,r11,r12, r20,r21,r22):
         # world = M * local, so the COLUMNS of the matrix are the part's local
         # axes expressed in world space (rows are not - using rows mirrors
@@ -42,6 +46,7 @@ def parse(path):
             "pos": (v[0], v[1], v[2]),
             "x": xaxis, "y": yaxis, "z": zaxis,
             "name": name,
+            "color": color,
         })
     return parts
 
@@ -109,12 +114,27 @@ PART_SIZE = {
     "Door3": (6, 8, 1),
     "Post": (1, 4, 1),
     "Stair1": (4, 2, 4),
+    "Stair2": (4, 2, 4),
     "Ladder1": (4, 4, 1),
     "Chair1": (2, 5, 2),
     "Wedge1": (4, 1, 4), "Wedge2": (4, 2, 4), "Wedge3": (4, 3, 4),
     "Wedge4": (4, 4, 4), "Wedge5": (4, 5, 4), "Wedge6": (4, 6, 4),
     "Wedge7": (4, 7, 4), "Wedge8": (4, 8, 4), "Wedge9": (4, 9, 4),
     "Wedge10": (4, 10, 4),
+    # --- Hant.txt parts (sizes inferred from placement steps across exports) ---
+    # CounterTop1 tiles a dense 4-stud grid at y=0.2 -> 4x4, h=0.4 (flush 0..0.4)
+    "CounterTop1": (4, 0.4, 4),
+    "CounterTop1Thin": (4, 0.4, 4),
+    # _Thin wedges step at 1.0 in rows/columns -> 1-stud footprint
+    "Wedge1_Thin": (1, 1, 1), "Wedge2_Thin": (1, 2, 1),
+    "Wedge3_Thin": (1, 3, 1), "Wedge4_Thin": (1, 4, 1),
+    "Wedge5_Thin": (1, 5, 1), "Wedge6_Thin": (1, 6, 1),
+    "Wedge7_Thin": (1, 7, 1), "Wedge8_Thin": (1, 8, 1),
+    "Wedge9_Thin": (1, 9, 1), "Wedge10_Thin": (1, 10, 1),
+    "Door1": (4, 8, 1), "Door2": (2, 8, 1),
+    "Painting6": (6, 4, 0.2), "Painting3": (3, 3, 0.2),
+    "Lever0": (0.4, 1, 0.4),
+    "UtilityTruck2": (6, 4, 10),
 }
 
 PART_COLOR = {
@@ -240,7 +260,10 @@ def render(parts, out_path, yaw_deg=35, pitch_deg=28, width=900, height=700,
     ymin = min(min(view(c)[1] for c in part_box(p)) for p in parts)
     ymax = max(max(view(c)[1] for c in part_box(p)) for p in parts)
     for p in parts:
-        base = PART_COLOR.get(p["name"], (140, 140, 140))
+        if p.get("color"):
+            base = tuple(max(24, min(255, int(c * 255))) for c in p["color"])
+        else:
+            base = PART_COLOR.get(p["name"], (140, 140, 140))
         for quad, n in faces_for(p):
             pts = [view(c) for c in quad]
             if n is not None:
@@ -341,6 +364,10 @@ def ascii_top(parts, step=2.0, only=None):
         "Wedge1": "/", "Wedge2": "/", "Wedge3": "/", "Wedge4": "/",
         "Wedge5": "/", "Wedge6": "/", "Wedge7": "/", "Wedge8": "/",
         "Wedge9": "/", "Wedge10": "/",
+        "CounterTop1": "=", "CounterTop1Thin": "-",
+        "Stair2": "H", "Door1": "D", "Door2": "D",
+        "Painting6": "p", "Painting3": "p", "Lever0": "l",
+        "UtilityTruck2": "T",
     }
     for p in parts:
         sx, sy, sz = PART_SIZE.get(p["name"], (2, 2, 2))
